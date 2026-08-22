@@ -272,6 +272,23 @@ function client.reportCommandResult(
     return true
 end
 
+function client.reportCommandProgress(botID, commandID, stepsCompleted, message)
+    local url = SERVER_URL .. "/bots/" .. tostring(botID) ..
+        "/commands/" .. tostring(commandID) .. "/progress"
+    local response = http.post(
+        url,
+        textutils.serializeJSON({
+            steps_completed = stepsCompleted or 0,
+            message = message or "Working"
+        }),
+        { ["Content-Type"] = "application/json" }
+    )
+    if not response then return false end
+    local code = response.getResponseCode()
+    safeClose(response)
+    return code >= 200 and code < 300
+end
+
 function client.sendMapUpdate(botID, blocks)
     local payload = {
         bot_id = botID,

@@ -549,6 +549,7 @@ executeCommand = function(command)
         bot.task = jobName
         bot.mode = "auto"
         state.save(bot)
+        local lastProgressReport = 0
         local callbacks = {
             shouldStop = jobShouldStop,
             service = serviceJob,
@@ -556,6 +557,14 @@ executeCommand = function(command)
                 bot.task = jobName .. " " .. done .. "/" .. total
                 saveCommandProgress(done)
                 state.save(bot)
+                local now = os.epoch("utc")
+                if done == total or done % 5 == 0 or
+                    now - lastProgressReport >= 1000 then
+                    client.reportCommandProgress(
+                        bot.id, commandID, done, bot.task
+                    )
+                    lastProgressReport = now
+                end
             end,
             scan = function(_, movementAction)
                 scanAndShare(
