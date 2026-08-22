@@ -139,6 +139,7 @@ function client.sendState(bot)
         inventory = inventory,
         home = bot.home,
         locations = bot.locations or {}
+        ,software_version = bot.software_version or "unknown"
     }
 
     local body = textutils.serializeJSON(payload)

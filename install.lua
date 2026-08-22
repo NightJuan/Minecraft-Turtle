@@ -3,6 +3,8 @@ local REPOSITORY = "Minecraft-Turtle"
 local BRANCH = "main"
 local RAW_BASE = "https://raw.githubusercontent.com/" .. OWNER .. "/" ..
     REPOSITORY .. "/" .. BRANCH .. "/"
+local arguments = { ... }
+local NO_START = arguments[1] == "--no-start"
 
 local FILES = {
     "install.lua",
@@ -10,6 +12,7 @@ local FILES = {
     "startup.lua",
     "setup.lua",
     "main.lua",
+    "version.json",
     "core/identity.lua",
     "core/jobs.lua",
     "core/map.lua",
@@ -23,6 +26,7 @@ local FILES = {
 
 local STAGE = "/.turtle-install-stage"
 local BACKUP = "/.turtle-install-backup"
+local RESULT_FILE = "/.turtle-install-result"
 
 local function parent(path)
     return fs.getDir(path)
@@ -148,6 +152,13 @@ remove(STAGE)
 remove(BACKUP)
 print()
 print("Installation complete. Saved /data was preserved.")
+
+if NO_START then
+    local result = fs.open(RESULT_FILE, "w")
+    result.write("ok")
+    result.close()
+    return
+end
 
 if not fs.exists("/data/config.json") then
     print("Starting first-time setup...")

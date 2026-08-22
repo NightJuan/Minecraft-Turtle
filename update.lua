@@ -1,5 +1,6 @@
 local INSTALLER_URL = "https://raw.githubusercontent.com/NightJuan/Minecraft-Turtle/main/install.lua"
 local TEMP_INSTALLER = "/.turtle-installer.lua"
+local RESULT_FILE = "/.turtle-install-result"
 
 print("Checking GitHub for the latest turtle software...")
 
@@ -22,14 +23,28 @@ if code < 200 or code >= 300 then
 end
 
 if fs.exists(TEMP_INSTALLER) then fs.delete(TEMP_INSTALLER) end
+if fs.exists(RESULT_FILE) then fs.delete(RESULT_FILE) end
 local file = fs.open(TEMP_INSTALLER, "w")
 file.write(response.readAll())
 file.close()
 response.close()
 
-local ok = shell.run(TEMP_INSTALLER)
+local ok = shell.run(TEMP_INSTALLER, "--no-start")
 if fs.exists(TEMP_INSTALLER) then fs.delete(TEMP_INSTALLER) end
 
-if not ok then
-    print("The updater stopped before completion.")
+local installed = false
+if ok and fs.exists(RESULT_FILE) then
+    local result = fs.open(RESULT_FILE, "r")
+    installed = result.readAll() == "ok"
+    result.close()
 end
+if fs.exists(RESULT_FILE) then fs.delete(RESULT_FILE) end
+
+if not installed then
+    print("The updater stopped before completion.")
+    return
+end
+
+print("Update installed. Rebooting...")
+sleep(1)
+os.reboot()

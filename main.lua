@@ -14,6 +14,16 @@ local world = map.load()
 local emergencyStopRequested = false
 local FUEL_RESERVE = 20
 
+local versionFile = fs.open("/version.json", "r")
+if versionFile then
+    local versionData = textutils.unserializeJSON(versionFile.readAll())
+    versionFile.close()
+    bot.software_version = type(versionData) == "table" and
+        versionData.version or "unknown"
+else
+    bot.software_version = "unknown"
+end
+
 bot.task = "Idle"
 bot.mode = "manual"
 state.save(bot)
@@ -277,7 +287,15 @@ executeCommand = function(command)
 
     local movementFunction = nil
 
-    if action == "set_home" then
+    if action == "update_software" then
+        bot.task = "Installing Update"
+        state.save(bot)
+        client.sendState(bot)
+        reportCommandResult(bot.id, commandID, "completed",
+            "Software update started", 1)
+        shell.run("/update.lua")
+        return true
+    elseif action == "set_home" then
         state.setHome(bot)
         reportCommandResult(bot.id, commandID, "completed", "Home position saved", 1)
         return true
