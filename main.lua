@@ -7,6 +7,7 @@ local pathfinder = require("core.pathfinder")
 local jobs = require("core.jobs")
 local scanner = require("core.scanner")
 local map = require("core.map")
+local manufacturing = require("core.manufacturing")
 local client = require("network.client")
 
 local bot = state.load()
@@ -24,8 +25,13 @@ else
     bot.software_version = "unknown"
 end
 
-bot.task = "Idle"
-bot.mode = "manual"
+if bot.commissioning then
+    bot.task = "Awaiting Approval"
+    bot.mode = "commissioning"
+else
+    bot.task = "Idle"
+    bot.mode = "manual"
+end
 state.save(bot)
 
 
@@ -287,7 +293,31 @@ executeCommand = function(command)
 
     local movementFunction = nil
 
-    if action == "update_software" then
+    if action == "commission_approved" then
+        bot.commissioning = false
+        bot.task = "Idle"
+        bot.mode = "manual"
+        state.save(bot)
+        client.sendState(bot)
+        reportCommandResult(bot.id, commandID, "completed",
+            "Commissioning approved", 1)
+        return true
+    elseif action == "manufacture_turtle" then
+        bot.task = "Manufacturing Child"
+        bot.mode = "auto"
+        state.save(bot)
+        client.sendState(bot)
+        local successful, reason = manufacturing.buildChild(bot)
+        bot.task = "Idle"
+        bot.mode = "manual"
+        state.save(bot)
+        client.sendState(bot)
+        reportCommandResult(bot.id, commandID,
+            successful and "completed" or "blocked",
+            reason or (successful and "Child started" or "Manufacturing failed"),
+            successful and 1 or 0)
+        return successful
+    elseif action == "update_software" then
         bot.task = "Installing Update"
         state.save(bot)
         client.sendState(bot)

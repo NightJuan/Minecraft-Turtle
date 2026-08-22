@@ -15,6 +15,7 @@ local FILES = {
     "version.json",
     "core/identity.lua",
     "core/jobs.lua",
+    "core/manufacturing.lua",
     "core/map.lua",
     "core/movement.lua",
     "core/navigation.lua",

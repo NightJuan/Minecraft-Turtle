@@ -140,6 +140,8 @@ function client.sendState(bot)
         home = bot.home,
         locations = bot.locations or {}
         ,software_version = bot.software_version or "unknown"
+        ,commissioning = bot.commissioning == true
+        ,parent_id = bot.parent_id
     }
 
     local body = textutils.serializeJSON(payload)
