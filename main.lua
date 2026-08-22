@@ -250,6 +250,14 @@ local function retrieveAndRefuel()
         refueled and nil or "Container has no usable fuel"
 end
 
+local function emptyInventorySlots()
+    local empty = 0
+    for slot = 1, 16 do
+        if turtle.getItemCount(slot) == 0 then empty = empty + 1 end
+    end
+    return empty
+end
+
 executeCommand = function(command)
     local action = command.action
     local steps = command.steps or 1
@@ -421,24 +429,129 @@ executeCommand = function(command)
         local jobName = action == "job_tunnel" and "Tunnel"
             or action == "job_excavate" and "Excavation" or "Grid Scan"
         local jobCancelled = false
+        local function jobShouldStop()
+            while not emergencyStopRequested do
+                local control = client.getJobControl(bot.id, commandID)
+                if control == "cancelled" then
+                    jobCancelled = true
+                    return true
+                end
+                if control ~= "paused" then return false end
+                bot.task = jobName .. " paused"
+                state.save(bot)
+                sleep(1)
+            end
+            return true
+        end
+
+        local function jobNavigate(destination, taskName)
+            bot.task = taskName
+            state.save(bot)
+            local successful, reason = navigation.navigateTo(
+                bot, world, destination, jobShouldStop,
+                function() scanAndShare(false) end,
+                function(route, cost)
+                    client.sendPlannedRoute(bot.id, route, cost)
+                end
+            )
+            client.clearPlannedRoute(bot.id)
+            return successful, reason
+        end
+
+        local function waitForLocation(name, label)
+            while not (bot.locations and bot.locations[name]) do
+                if jobShouldStop() then return nil, "Cancelled" end
+                bot.task = jobName .. " paused - set " .. label
+                state.save(bot)
+                sleep(3)
+            end
+            return bot.locations[name]
+        end
+
+        local function serviceJob(done, total)
+            local needsDeposit = destructive and emptyInventorySlots() <= 1
+            local fuel = turtle.getFuelLevel()
+            local needsFuel = false
+            if fuel ~= "unlimited" then
+                refuelTo(100)
+                fuel = turtle.getFuelLevel()
+                local station = bot.locations and bot.locations.fuel_station
+                local routeToFuel = station and routeFuelNeeded(station) or nil
+                local safeMinimum = (routeToFuel or 20) + FUEL_RESERVE
+                needsFuel = fuel <= safeMinimum
+            end
+
+            if not needsDeposit and not needsFuel then return true end
+
+            local workPosition = {
+                x = bot.position.x, y = bot.position.y, z = bot.position.z,
+                facing = bot.facing
+            }
+            bot.active_command.service_return = workPosition
+            bot.active_command.service_reason = needsDeposit and "inventory" or "fuel"
+            state.save(bot)
+
+            if needsDeposit then
+                local storage, locationReason = waitForLocation("storage", "Storage")
+                if not storage then return false, locationReason end
+                local fuelToStorage = routeFuelNeeded(storage)
+                if fuelToStorage then refuelTo(fuelToStorage + FUEL_RESERVE) end
+                local arrived, travelReason = jobNavigate(storage, "Servicing - Storage")
+                if not arrived then return false, "Cannot reach Storage: " .. tostring(travelReason) end
+
+                local deposited, depositReason = depositInventory()
+                while deposited == 0 do
+                    if jobShouldStop() then return false, "Cancelled" end
+                    bot.task = jobName .. " paused - Storage blocked/full"
+                    state.save(bot)
+                    sleep(3)
+                    deposited, depositReason = depositInventory()
+                end
+            end
+
+            fuel = turtle.getFuelLevel()
+            if fuel ~= "unlimited" then
+                refuelTo(200)
+                needsFuel = turtle.getFuelLevel() < 100
+            else
+                needsFuel = false
+            end
+
+            if needsFuel then
+                local station, locationReason = waitForLocation("fuel_station", "Fuel Station")
+                if not station then return false, locationReason end
+                local arrived, travelReason = jobNavigate(station, "Servicing - Fuel")
+                if not arrived then return false, "Cannot reach Fuel Station: " .. tostring(travelReason) end
+
+                local refueled, refuelReason = retrieveAndRefuel()
+                while not refueled do
+                    if jobShouldStop() then return false, "Cancelled" end
+                    bot.task = jobName .. " paused - Fuel unavailable"
+                    state.save(bot)
+                    sleep(3)
+                    refueled, refuelReason = retrieveAndRefuel()
+                end
+            end
+
+            local returned, returnReason = jobNavigate(
+                workPosition, "Returning to " .. jobName
+            )
+            if not returned then
+                return false, "Cannot return to job: " .. tostring(returnReason)
+            end
+
+            bot.active_command.service_return = nil
+            bot.active_command.service_reason = nil
+            bot.task = jobName .. " " .. done .. "/" .. total
+            state.save(bot)
+            return true
+        end
         bot.task = jobName
         bot.mode = "auto"
         state.save(bot)
         local callbacks = {
-            shouldStop = function()
-                while not emergencyStopRequested do
-                    local control = client.getJobControl(bot.id, commandID)
-                    if control == "cancelled" then
-                        jobCancelled = true
-                        return true
-                    end
-                    if control ~= "paused" then return false end
-                    bot.task = jobName .. " paused"
-                    state.save(bot)
-                    sleep(1)
-                end
-                return true
-            end,
+            shouldStop = jobShouldStop,
+            service = serviceJob,
             progress = function(done, total)
                 bot.task = jobName .. " " .. done .. "/" .. total
                 saveCommandProgress(done)
@@ -451,6 +564,81 @@ executeCommand = function(command)
                 )
             end
         }
+
+        if bot.active_command.service_return then
+            local savedWork = bot.active_command.service_return
+            local serviceReason = bot.active_command.service_reason
+            local serviceSuccessful = true
+            local serviceFailure = nil
+
+            if serviceReason == "inventory" then
+                local storage
+                storage, serviceFailure = waitForLocation("storage", "Storage")
+                if storage then
+                    serviceSuccessful, serviceFailure = jobNavigate(
+                        storage, "Recovering - Storage"
+                    )
+                else
+                    serviceSuccessful = false
+                end
+                if serviceSuccessful then
+                    local deposited
+                    repeat
+                        deposited, serviceFailure = depositInventory()
+                        if deposited == 0 then
+                            bot.task = jobName .. " paused - Storage blocked/full"
+                            state.save(bot)
+                            sleep(3)
+                        end
+                    until deposited > 0 or jobShouldStop()
+                    serviceSuccessful = deposited > 0
+                end
+            elseif serviceReason == "fuel" then
+                local station
+                station, serviceFailure = waitForLocation("fuel_station", "Fuel Station")
+                if station then
+                    serviceSuccessful, serviceFailure = jobNavigate(
+                        station, "Recovering - Fuel"
+                    )
+                else
+                    serviceSuccessful = false
+                end
+                if serviceSuccessful then
+                    local refueled
+                    repeat
+                        refueled, serviceFailure = retrieveAndRefuel()
+                        if not refueled then
+                            bot.task = jobName .. " paused - Fuel unavailable"
+                            state.save(bot)
+                            sleep(3)
+                        end
+                    until refueled or jobShouldStop()
+                    serviceSuccessful = refueled == true
+                end
+            end
+
+            if serviceSuccessful then
+                serviceSuccessful, serviceFailure = jobNavigate(
+                    savedWork, "Recovering Job Position"
+                )
+            end
+
+            if not serviceSuccessful then
+                bot.task = "Idle"
+                bot.mode = "manual"
+                state.save(bot)
+                reportCommandResult(bot.id, commandID,
+                    (jobCancelled or emergencyStopRequested) and "cancelled" or "blocked",
+                    "Job service recovery failed: " .. tostring(serviceFailure),
+                    recoveredSteps)
+                return false
+            end
+
+            bot.active_command.service_return = nil
+            bot.active_command.service_reason = nil
+            state.save(bot)
+        end
+
         local successful, reason, completed
         if action == "job_tunnel" then
             successful, reason, completed = jobs.tunnel(
