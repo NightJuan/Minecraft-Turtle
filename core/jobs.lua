@@ -47,6 +47,12 @@ local function runActions(bot, actions, startIndex, destructive, callbacks)
     }
     for index = startIndex + 1, #actions do
         if callbacks.shouldStop() then return false, "Cancelled", index - 1 end
+        if callbacks.service then
+            local serviced, serviceReason = callbacks.service(index - 1, #actions)
+            if not serviced then
+                return false, serviceReason or "Automatic service failed", index - 1
+            end
+        end
         local action = actions[index]
         if destructive and action == "forward" then
             local ok, reason = digForward()
@@ -83,6 +89,7 @@ function jobs.tunnel(bot, length, startIndex, callbacks)
     digUp()
     local wrapped = {
         shouldStop = callbacks.shouldStop,
+        service = callbacks.service,
         progress = callbacks.progress,
         scan = function(full)
             digUp()
